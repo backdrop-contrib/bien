@@ -18,7 +18,7 @@ function bien_menu() {
     'page callback' => 'backdrop_get_form',
     'page arguments' => array('bien_import_settings'),
     'access arguments' => array('administer site configuration'),
-    'file' => 'bein_import.admin.inc',
+    'file' => 'bien_import.admin.inc',
   );
   $items['admin/config/system/content/import'] = array(
     'title' => 'Import Content',
