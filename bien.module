@@ -9,5 +9,43 @@
   * Implements hook_menu().
   */
 function bien_menu() {
-  
+  $items = array();
+
+  // Content imports and exports.
+  $items['admin/config/system/content'] = array(
+    'title' => 'Content',
+    'description' => 'Import content from a Backdrop site.',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('bien_import_settings'),
+    'access arguments' => array('administer site configuration'),
+    'file' => 'bein_import.admin.inc',
+  );
+  $items['admin/config/system/content/import'] = array(
+    'title' => 'Import Content',
+    'description' => 'Import content from a Backdrop site.',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('bien_import_settings'),
+    'access arguments' => array('administer site configuration'),
+    'file' => 'bien_import.admin.inc',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => 20,
+  );
+  $items['admin/config/system/content/export'] = array(
+    'title' => 'Export Content',
+    'description' => 'Export content from a Backdrop site.',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('bien_export_settings'),
+    'access arguments' => array('administer site configuration'),
+    'file' => 'bien_export.admin.inc',
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 40,
+  );
+  $items['admin/config/system/content/export-content-download'] = array(
+    'page callback' => 'content_download_full_export',
+    'access arguments' => array('administer site configuration'),
+    'file' => 'bien_export.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
 }
