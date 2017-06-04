@@ -14,7 +14,7 @@ function bien_menu() {
   // Content imports and exports.
   $items['admin/config/system/content'] = array(
     'title' => 'BIEN Content',
-    'description' => 'Import content from a Backdrop site.',
+    'description' => 'Import or export content from a Backdrop site.',
     'page callback' => 'backdrop_get_form',
     'page arguments' => array('bien_import_settings'),
     'access arguments' => array('administer site configuration'),
