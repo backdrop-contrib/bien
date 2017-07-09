@@ -19,10 +19,6 @@ Installation
 * Install this module using the official Backdrop CMS instructions at
     https://backdropcms.org/guide/modules
 
-* Visit the configuration page under Administration > Configuration > System >
-    SMTP Authentication (admin/config/system/smtp) and enter the required
-    information.
-
 License
 -------
 
