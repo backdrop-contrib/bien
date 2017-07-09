@@ -12,3 +12,25 @@ the `Configuration` menu item in the admin bar.
   * Provides the export form. This form allows you to select which content types
   you would like to export and then creates a json file that is downloaded to
   your computer.
+
+Installation
+------------
+
+* Install this module using the official Backdrop CMS instructions at
+    https://backdropcms.org/guide/modules
+
+* Visit the configuration page under Administration > Configuration > System >
+    SMTP Authentication (admin/config/system/smtp) and enter the required
+    information.
+
+License
+-------
+
+This project is GPL v2 software. See the LICENSE.txt file in this directory for
+complete text.
+
+Current Maintainers
+-------------------
+
+* Geoff St. Pierre [serundeputy](https://github.com/serundeputy).
+* Seeking additional maintainers.
