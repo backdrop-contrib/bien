@@ -80,7 +80,7 @@ function bien_import_settings_submit(&$form, &$form_state) {
   // Save file status.
   file_save($file);
 
-  $realpath = backdrop_realpath($file->path['source']);
+  $realpath = backdrop_realpath($file->uri);
 
   // TODO: figure out if the file is an XML WordPress export or a JSON Backdrop
   // export.
