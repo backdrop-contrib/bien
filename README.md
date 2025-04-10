@@ -13,6 +13,18 @@ the `Configuration` menu item in the admin bar.
   you would like to export and then creates a json file that is downloaded to
   your computer.
 
+This module is still in development, we welcome testing and reporting of bugs or
+feature requests in the issue queue. In our testing the module works fairly well
+in the following controlled experiment. 
+
+1) We use the [Sample Animal Content](https://github.com/backdrop-contrib/sample_animal_content) module to create an Animal content type,
+related fields and 8 nodes of type Animal, including images.
+
+2) We use BIEN to export the content type, the nodes, and the images and successfully
+import them into a fresh site with any of those things in place.
+
+We need to test a wider range of use cases.
+
 Notes About Use of AI
 ---------------------
 We have been using AI tools to make changes to this module and add features. We
