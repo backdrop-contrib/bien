@@ -192,6 +192,26 @@ function bien_import_settings_submit(&$form, &$form_state) {
         }
         node_type_save($content_type);
 
+        // Inform about the new content type creation
+        backdrop_set_message(t('Created new content type: @name (@type)', array(
+          '@name' => $content_type->name,
+          '@type' => $content_type->type
+        )));
+
+        // Grant admin role all permissions for this content type
+        $admin_rid = config_get('system.core', 'user_admin_role');
+        if ($admin_rid) {
+          $permissions = array(
+            "create {$type} content" => TRUE,
+            "edit any {$type} content" => TRUE,
+            "edit own {$type} content" => TRUE,
+            "delete any {$type} content" => TRUE,
+            "delete own {$type} content" => TRUE,
+          );
+          user_role_change_permissions($admin_rid, $permissions);
+          backdrop_set_message(t('Granted administrator permissions for content type: @type', array('@type' => $content_type->name)));
+        }
+
         // Import field configurations
         if (isset($type_data['field_configs'])) {
           foreach ($type_data['field_configs'] as $field_name => $field_config) {
@@ -209,6 +229,9 @@ function bien_import_settings_submit(&$form, &$form_state) {
             }
           }
         }
+
+        // Clear the menu cache to make the new content type available
+        menu_rebuild();
       }
     }
 
