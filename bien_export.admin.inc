@@ -72,9 +72,9 @@ function bien_export_settings_submit(array $form, array &$form_state) {
         'help' => $content_type->help,
         'title_label' => $content_type->title_label,
         'base' => $content_type->base,
-        'custom' => $content_type->custom,
+        'custom' => isset($content_type->custom) ? $content_type->custom : FALSE,
         'modified' => $content_type->modified,
-        'locked' => $content_type->locked,
+        'locked' => isset($content_type->locked) ? $content_type->locked : FALSE,
         'disabled' => $content_type->disabled,
         'module' => $content_type->module,
         'node_preview' => $content_type->node_preview,
@@ -125,46 +125,140 @@ function bien_export_settings_submit(array $form, array &$form_state) {
   $files_dir = $temp_dir . '/files';
   file_prepare_directory($files_dir, FILE_CREATE_DIRECTORY);
 
+  // Track exported files to avoid duplicates
+  $exported_files = array();
+  $file_count = 0;
+  $error_count = 0;
+
   // Export associated files
   foreach ($nodes as $node) {
     $fields = field_info_instances('node', $node->type);
     foreach ($fields as $field_name => $instance) {
       $field_info = field_info_field($field_name);
       if ($field_info['type'] === 'file' || $field_info['type'] === 'image') {
+        backdrop_set_message(t('Processing @type field @field for node @nid', array(
+          '@type' => $field_info['type'],
+          '@field' => $field_name,
+          '@nid' => $node->nid
+        )));
+        
         $items = field_get_items('node', $node, $field_name);
         if ($items) {
+          backdrop_set_message(t('Found @count items in field @field', array(
+            '@count' => count($items),
+            '@field' => $field_name
+          )));
+          
           foreach ($items as $item) {
             if (isset($item['fid'])) {
+              // Skip if we've already exported this file
+              if (isset($exported_files[$item['fid']])) {
+                backdrop_set_message(t('Skipping already exported file @fid', array('@fid' => $item['fid'])));
+                continue;
+              }
+
               $file = file_load($item['fid']);
               if ($file) {
-                // Copy the file to our export directory
+                backdrop_set_message(t('Loading file @fid: @uri', array(
+                  '@fid' => $file->fid,
+                  '@uri' => $file->uri
+                )));
+                
+                // Validate file exists and is readable
                 $source = backdrop_realpath($file->uri);
-                if ($source) {
+                if ($source && file_exists($source) && is_readable($source)) {
                   $dest = $files_dir . '/' . $file->fid . '_' . $file->filename;
-                  copy($source, $dest);
+                  backdrop_set_message(t('Copying file from @source to @dest', array(
+                    '@source' => $source,
+                    '@dest' => $dest
+                  )));
+                  
+                  // Copy the file
+                  if (copy($source, $dest)) {
+                    // Store file metadata
+                    $exported_files[$item['fid']] = array(
+                      'fid' => $file->fid,
+                      'filename' => $file->filename,
+                      'uri' => $file->uri,
+                      'filemime' => $file->filemime,
+                      'filesize' => $file->filesize,
+                      'status' => $file->status,
+                      'timestamp' => $file->timestamp,
+                    );
+                    $file_count++;
+                    backdrop_set_message(t('Successfully exported file @filename', array('@filename' => $file->filename)));
+                  } else {
+                    backdrop_set_message(t('Warning: Could not copy file @file.', array('@file' => $file->filename)), 'warning');
+                    $error_count++;
+                  }
+                } else {
+                  backdrop_set_message(t('Warning: File @file does not exist or is not readable. Source: @source', array(
+                    '@file' => $file->uri,
+                    '@source' => $source
+                  )), 'warning');
+                  $error_count++;
                 }
+              } else {
+                backdrop_set_message(t('Warning: Could not load file with ID @fid', array('@fid' => $item['fid'])), 'warning');
+                $error_count++;
               }
             }
           }
+        } else {
+          backdrop_set_message(t('No items found in field @field', array('@field' => $field_name)));
         }
       }
     }
   }
 
+  // Save file metadata to a separate JSON file
+  $files_json = $temp_dir . '/files.json';
+  file_put_contents($files_json, json_encode($exported_files, JSON_PRETTY_PRINT));
+  backdrop_set_message(t('Saved metadata for @count files', array('@count' => count($exported_files))));
+
   // Create a zip file
   $zip_file = 'public://content-export.zip';
   $zip = new ZipArchive();
   if ($zip->open(backdrop_realpath($zip_file), ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
-    // Add the JSON file
-    $zip->addFile(backdrop_realpath($json_file), 'content.json');
+    // Add the JSON files
+    $json_realpath = backdrop_realpath($json_file);
+    $files_json_realpath = backdrop_realpath($files_json);
+    
+    if (file_exists($json_realpath)) {
+      $zip->addFile($json_realpath, 'content.json');
+    } else {
+      backdrop_set_message(t('Warning: content.json not found at @path', array('@path' => $json_realpath)), 'warning');
+    }
+    
+    if (file_exists($files_json_realpath)) {
+      $zip->addFile($files_json_realpath, 'files.json');
+    } else {
+      backdrop_set_message(t('Warning: files.json not found at @path', array('@path' => $files_json_realpath)), 'warning');
+    }
     
     // Add all files from the files directory
     $files = file_scan_directory($files_dir, '/.*/');
+    backdrop_set_message(t('Found @count files to add to ZIP', array('@count' => count($files))));
+    
     foreach ($files as $file) {
-      $zip->addFile($file->uri, 'files/' . basename($file->uri));
+      $file_realpath = backdrop_realpath($file->uri);
+      if (file_exists($file_realpath)) {
+        $zip->addFile($file_realpath, 'files/' . basename($file->uri));
+        backdrop_set_message(t('Added file to ZIP: @file', array('@file' => basename($file->uri))));
+      } else {
+        backdrop_set_message(t('Warning: File not found at @path', array('@path' => $file_realpath)), 'warning');
+      }
     }
     
     $zip->close();
+
+    // Show summary message
+    backdrop_set_message(t('Export completed: @count files exported, @errors errors.', array(
+      '@count' => $file_count,
+      '@errors' => $error_count
+    )));
+  } else {
+    backdrop_set_message(t('Error: Could not create ZIP file.'), 'error');
   }
 
   // Clean up temporary directory
