@@ -13,6 +13,12 @@ the `Configuration` menu item in the admin bar.
   you would like to export and then creates a json file that is downloaded to
   your computer.
 
+Notes About Use of AI
+---------------------
+We have been using AI tools to make changes to this module and add features. We
+encourage folks to review the code and help us identify quirky things that AI 
+might have done or places where it may not be following BackdropCMS best practices.
+
 Installation
 ------------
 
