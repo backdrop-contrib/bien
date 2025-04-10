@@ -46,15 +46,63 @@ function bien_export_settings($form, &$form_state) {
  * Submit handler for config_export_full_form().
  */
 function bien_export_settings_submit(array $form, array &$form_state) {
-  $query = db_select('node', 'n')
-    ->fields('n', array('nid'));
-  $or = db_or();
+  $export_data = array(
+    'content_types' => array(),
+    'nodes' => array(),
+  );
+
+  // Get selected content types
+  $selected_types = array();
   if ($form_state['values']['content']) {
     foreach ($form_state['values']['content'] as $type) {
       if ($type) {
-        $or->condition('type', $type);
+        $selected_types[] = $type;
       }
     }
+  }
+
+  // Export content type definitions
+  foreach ($selected_types as $type) {
+    $content_type = node_type_get_type($type);
+    if ($content_type) {
+      $export_data['content_types'][$type] = array(
+        'name' => $content_type->name,
+        'type' => $content_type->type,
+        'description' => $content_type->description,
+        'help' => $content_type->help,
+        'title_label' => $content_type->title_label,
+        'base' => $content_type->base,
+        'custom' => $content_type->custom,
+        'modified' => $content_type->modified,
+        'locked' => $content_type->locked,
+        'disabled' => $content_type->disabled,
+        'module' => $content_type->module,
+        'node_preview' => $content_type->node_preview,
+        'orig_type' => $content_type->orig_type,
+      );
+
+      // Export field instances for this content type
+      $field_instances = field_info_instances('node', $type);
+      $export_data['content_types'][$type]['field_instances'] = $field_instances;
+
+      // Export field configurations
+      $field_configs = array();
+      foreach ($field_instances as $field_name => $instance) {
+        $field_config = field_info_field($field_name);
+        if ($field_config) {
+          $field_configs[$field_name] = $field_config;
+        }
+      }
+      $export_data['content_types'][$type]['field_configs'] = $field_configs;
+    }
+  }
+
+  // Export nodes
+  $query = db_select('node', 'n')
+    ->fields('n', array('nid'));
+  $or = db_or();
+  foreach ($selected_types as $type) {
+    $or->condition('type', $type);
   }
   $query->condition($or);
   $result = $query->orderBy('nid')->execute();
@@ -63,21 +111,76 @@ function bien_export_settings_submit(array $form, array &$form_state) {
     $nids[] = $r->nid;
   }
   $nodes = node_load_multiple($nids);
-  $content = json_encode($nodes);
+  $export_data['nodes'] = $nodes;
 
-  file_unmanaged_save_data($content, 'public://content-export.json', FILE_EXISTS_REPLACE);
+  // Create a temporary directory for the export
+  $temp_dir = 'temporary://bien_export_' . time();
+  file_prepare_directory($temp_dir, FILE_CREATE_DIRECTORY);
+
+  // Save the JSON data
+  $json_file = $temp_dir . '/content.json';
+  file_put_contents($json_file, json_encode($export_data, JSON_PRETTY_PRINT));
+
+  // Create a files directory
+  $files_dir = $temp_dir . '/files';
+  file_prepare_directory($files_dir, FILE_CREATE_DIRECTORY);
+
+  // Export associated files
+  foreach ($nodes as $node) {
+    $fields = field_info_instances('node', $node->type);
+    foreach ($fields as $field_name => $instance) {
+      $field_info = field_info_field($field_name);
+      if ($field_info['type'] === 'file' || $field_info['type'] === 'image') {
+        $items = field_get_items('node', $node, $field_name);
+        if ($items) {
+          foreach ($items as $item) {
+            if (isset($item['fid'])) {
+              $file = file_load($item['fid']);
+              if ($file) {
+                // Copy the file to our export directory
+                $source = backdrop_realpath($file->uri);
+                if ($source) {
+                  $dest = $files_dir . '/' . $file->fid . '_' . $file->filename;
+                  copy($source, $dest);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Create a zip file
+  $zip_file = 'public://content-export.zip';
+  $zip = new ZipArchive();
+  if ($zip->open(backdrop_realpath($zip_file), ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
+    // Add the JSON file
+    $zip->addFile(backdrop_realpath($json_file), 'content.json');
+    
+    // Add all files from the files directory
+    $files = file_scan_directory($files_dir, '/.*/');
+    foreach ($files as $file) {
+      $zip->addFile($file->uri, 'files/' . basename($file->uri));
+    }
+    
+    $zip->close();
+  }
+
+  // Clean up temporary directory
+  file_unmanaged_delete_recursive($temp_dir);
 
   $form_state['redirect'] = 'admin/config/system/content/export-content-download';
 }
 
 /**
- * Downloads a tarball of the site configuration.
+ * Downloads the exported content.
  */
 function content_download_full_export() {
   $headers = array(
-    'Content-Disposition' => 'attachment; filename=content-export.json',
-    'Content-type' => 'application/json',
+    'Content-Disposition' => 'attachment; filename=content-export.zip',
+    'Content-type' => 'application/zip',
   );
-  file_transfer('public://content-export.json', $headers);
-  file_unmanaged_delete('public://content-export.json');
+  file_transfer('public://content-export.zip', $headers);
+  file_unmanaged_delete('public://content-export.zip');
 }
