@@ -21,7 +21,7 @@ in the following controlled experiment.
 related fields and 8 nodes of type Animal, including images.
 
 2) We use BIEN to export the content type, the nodes, and the images and successfully
-import them into a fresh site with any of those things in place.
+import them into a fresh site without that content type or nodes.
 
 We need to test a wider range of use cases.
 
