@@ -146,7 +146,7 @@ function bien_import_settings_submit(&$form, &$form_state) {
         }
         
         // Create a new file entry
-        $new_file = new stdClass();
+        $new_file = new File();
         $new_file->uri = 'public://' . $filename;
         $new_file->filename = $filename;
         $new_file->filemime = file_get_mimetype($filename);
@@ -337,9 +337,12 @@ function bien_import_settings_submit(&$form, &$form_state) {
   // Give a message to the user.
   backdrop_set_message(
     t(
-      'The import has been saved, filename: @filename. Check the /admin/content
-      page for a listing of content',
-      array('@filename' => $file->filename)
+      'Import completed successfully. @node_count nodes were imported with @file_count associated files. Visit the <a href="@content_url">content listing</a> to view the imported content.',
+      array(
+        '@node_count' => count($content),
+        '@file_count' => count($form_state['storage']['file_map']),
+        '@content_url' => url('admin/content')
+      )
     )
   );
 }
