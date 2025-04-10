@@ -6,7 +6,15 @@
  */
 
 /**
- * Callback function for /admin/config/import.
+ * Form callback: Provides the content export form.
+ *
+ * @param array $form
+ *   The form array.
+ * @param array $form_state
+ *   The form state array.
+ *
+ * @return array
+ *   The complete form array.
  */
 function bien_export_settings($form, &$form_state) {
   $form = array();
@@ -14,22 +22,23 @@ function bien_export_settings($form, &$form_state) {
     '#type' => 'fieldset',
     '#title' => t('Export Content'),
   );
+  
   $types = node_type_get_types();
-
-  // Prepare options array.
+  $type_options = array();
+  
   foreach ($types as $type) {
     $type_options[$type->type] = $type->name;
   }
 
   $form['export']['content'] = array(
     '#type' => 'checkboxes',
+    '#title' => t('Content Types'),
     '#options' => $type_options,
-    '#attributes' => array(
-      'checked' => 'checked',
-    ),
     '#default_value' => array_keys($type_options),
-    '#description' => t('Check the content types you would like to export.'),
+    '#description' => t('Select the content types you would like to export.'),
+    '#required' => TRUE,
   );
+  
   $form['export']['submit'] = array(
     '#type' => 'submit',
     '#value' => t('Export Content'),
@@ -43,7 +52,12 @@ function bien_export_settings($form, &$form_state) {
 }
 
 /**
- * Submit handler for config_export_full_form().
+ * Submit handler for the content export form.
+ *
+ * @param array $form
+ *   The form array.
+ * @param array $form_state
+ *   The form state array.
  */
 function bien_export_settings_submit(array $form, array &$form_state) {
   $export_data = array(
@@ -136,42 +150,21 @@ function bien_export_settings_submit(array $form, array &$form_state) {
     foreach ($fields as $field_name => $instance) {
       $field_info = field_info_field($field_name);
       if ($field_info['type'] === 'file' || $field_info['type'] === 'image') {
-        backdrop_set_message(t('Processing @type field @field for node @nid', array(
-          '@type' => $field_info['type'],
-          '@field' => $field_name,
-          '@nid' => $node->nid
-        )));
-        
         $items = field_get_items('node', $node, $field_name);
         if ($items) {
-          backdrop_set_message(t('Found @count items in field @field', array(
-            '@count' => count($items),
-            '@field' => $field_name
-          )));
-          
           foreach ($items as $item) {
             if (isset($item['fid'])) {
               // Skip if we've already exported this file
               if (isset($exported_files[$item['fid']])) {
-                backdrop_set_message(t('Skipping already exported file @fid', array('@fid' => $item['fid'])));
                 continue;
               }
 
               $file = file_load($item['fid']);
               if ($file) {
-                backdrop_set_message(t('Loading file @fid: @uri', array(
-                  '@fid' => $file->fid,
-                  '@uri' => $file->uri
-                )));
-                
                 // Validate file exists and is readable
                 $source = backdrop_realpath($file->uri);
                 if ($source && file_exists($source) && is_readable($source)) {
                   $dest = $files_dir . '/' . $file->fid . '_' . $file->filename;
-                  backdrop_set_message(t('Copying file from @source to @dest', array(
-                    '@source' => $source,
-                    '@dest' => $dest
-                  )));
                   
                   // Copy the file
                   if (copy($source, $dest)) {
@@ -186,26 +179,16 @@ function bien_export_settings_submit(array $form, array &$form_state) {
                       'timestamp' => $file->timestamp,
                     );
                     $file_count++;
-                    backdrop_set_message(t('Successfully exported file @filename', array('@filename' => $file->filename)));
                   } else {
                     backdrop_set_message(t('Warning: Could not copy file @file.', array('@file' => $file->filename)), 'warning');
                     $error_count++;
                   }
                 } else {
-                  backdrop_set_message(t('Warning: File @file does not exist or is not readable. Source: @source', array(
-                    '@file' => $file->uri,
-                    '@source' => $source
-                  )), 'warning');
                   $error_count++;
                 }
-              } else {
-                backdrop_set_message(t('Warning: Could not load file with ID @fid', array('@fid' => $item['fid'])), 'warning');
-                $error_count++;
               }
             }
           }
-        } else {
-          backdrop_set_message(t('No items found in field @field', array('@field' => $field_name)));
         }
       }
     }
@@ -214,7 +197,6 @@ function bien_export_settings_submit(array $form, array &$form_state) {
   // Save file metadata to a separate JSON file
   $files_json = $temp_dir . '/files.json';
   file_put_contents($files_json, json_encode($exported_files, JSON_PRETTY_PRINT));
-  backdrop_set_message(t('Saved metadata for @count files', array('@count' => count($exported_files))));
 
   // Create a zip file
   $zip_file = 'public://content-export.zip';
@@ -227,36 +209,36 @@ function bien_export_settings_submit(array $form, array &$form_state) {
     if (file_exists($json_realpath)) {
       $zip->addFile($json_realpath, 'content.json');
     } else {
-      backdrop_set_message(t('Warning: content.json not found at @path', array('@path' => $json_realpath)), 'warning');
+      backdrop_set_message(t('Error: Could not create content.json file.'), 'error');
     }
     
     if (file_exists($files_json_realpath)) {
       $zip->addFile($files_json_realpath, 'files.json');
-    } else {
-      backdrop_set_message(t('Warning: files.json not found at @path', array('@path' => $files_json_realpath)), 'warning');
     }
     
     // Add all files from the files directory
     $files = file_scan_directory($files_dir, '/.*/');
-    backdrop_set_message(t('Found @count files to add to ZIP', array('@count' => count($files))));
-    
     foreach ($files as $file) {
       $file_realpath = backdrop_realpath($file->uri);
       if (file_exists($file_realpath)) {
         $zip->addFile($file_realpath, 'files/' . basename($file->uri));
-        backdrop_set_message(t('Added file to ZIP: @file', array('@file' => basename($file->uri))));
       } else {
-        backdrop_set_message(t('Warning: File not found at @path', array('@path' => $file_realpath)), 'warning');
+        $error_count++;
       }
     }
     
     $zip->close();
 
     // Show summary message
-    backdrop_set_message(t('Export completed: @count files exported, @errors errors.', array(
-      '@count' => $file_count,
-      '@errors' => $error_count
-    )));
+    if ($error_count > 0) {
+      backdrop_set_message(t('Export completed with @errors error(s). Some files may be missing from the export.', array(
+        '@errors' => $error_count
+      )), 'warning');
+    } else {
+      backdrop_set_message(t('Export completed successfully. @count files included.', array(
+        '@count' => $file_count
+      )));
+    }
   } else {
     backdrop_set_message(t('Error: Could not create ZIP file.'), 'error');
   }

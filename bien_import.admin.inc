@@ -2,11 +2,19 @@
 
 /**
  * @file
- * Import form to import content from another Backdrop or Wordpress site.
+ * Import form to import content from another Backdrop or WordPress site.
  */
 
 /**
- * Callback function for /admin/config/import.
+ * Form callback: Provides the content import form.
+ *
+ * @param array $form
+ *   The form array.
+ * @param array $form_state
+ *   The form state array.
+ *
+ * @return array
+ *   The complete form array.
  */
 function bien_import_settings($form, &$form_state) {
   $form = array();
@@ -14,20 +22,15 @@ function bien_import_settings($form, &$form_state) {
     '#type' => 'fieldset',
     '#title' => t('Import Content'),
   );
-  // TODO: Figure out if we can autodetect the type of impoort.
-  // $form['import']['type-of-import'] = array(
-  //   '#type' => 'select',
-  //   '#title' => 'Source of import data:',
-  //   '#description' => 'Select the source of the import i.e. the data came from a Backdrop site.',
-  //   '#options' => array(
-  //     'backdrop' => 'Backdrop CMS',
-  //     'wordrpress' => 'WordPress',
-  //   ),
-  // );
+  // @todo Implement auto-detection of import source type.
   $form['import']['import-file'] = array(
     '#type' => 'file',
-    '#title' => 'Upload a ZIP file:',
-    '#description' => 'Upload a ZIP file containing content export from a Backdrop site.',
+    '#title' => t('Upload a ZIP file'),
+    '#description' => t('Upload a ZIP file containing content export from a Backdrop site.'),
+    '#upload_validators' => array(
+      'file_validate_extensions' => array('zip'),
+      'file_validate_size' => array(file_upload_max_size()),
+    ),
   );
   $form['import']['submit'] = array(
     '#type' => 'submit',
@@ -42,23 +45,28 @@ function bien_import_settings($form, &$form_state) {
 }
 
 /**
- * Validate handler for bien_import_settings().
+ * Validate handler for the content import form.
+ *
+ * @param array $form
+ *   The form array.
+ * @param array $form_state
+ *   The form state array.
  */
 function bien_import_settings_validate($form, &$form_state) {
-  $file = file_save_upload('import-file', array(
-    // Validate extensions.
+  $validators = array(
     'file_validate_extensions' => array('zip'),
-  ));
+    'file_validate_size' => array(file_upload_max_size()),
+  );
 
-  // If the file passed validation:
+  $file = file_save_upload('import-file', $validators);
+
   if ($file) {
-    // Move the file into the backdrop file system.
     if ($file = file_move($file, 'public://')) {
-      // Save the file for use in the submit handler.
       $form_state['storage']['import-file'] = $file;
     }
     else {
-      form_set_error('import-file',
+      form_set_error(
+        'import-file',
         t("Failed to write the uploaded file to the site's file folder.")
       );
     }
