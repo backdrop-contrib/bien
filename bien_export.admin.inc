@@ -63,6 +63,7 @@ function bien_export_settings_submit(array $form, array &$form_state) {
   $export_data = array(
     'content_types' => array(),
     'nodes' => array(),
+    'taxonomy' => array(),
   );
 
   // Get selected content types
@@ -71,6 +72,50 @@ function bien_export_settings_submit(array $form, array &$form_state) {
     foreach ($form_state['values']['content'] as $type) {
       if ($type) {
         $selected_types[] = $type;
+      }
+    }
+  }
+
+  // First, collect all taxonomy fields from selected content types
+  $taxonomy_fields = array();
+  foreach ($selected_types as $type) {
+    $field_instances = field_info_instances('node', $type);
+    foreach ($field_instances as $field_name => $instance) {
+      $field_info = field_info_field($field_name);
+      if ($field_info['type'] === 'taxonomy_term_reference') {
+        $taxonomy_fields[$field_name] = $field_info;
+      }
+    }
+  }
+
+  // Export taxonomy vocabularies and terms
+  foreach ($taxonomy_fields as $field_name => $field_info) {
+    $vocabulary = taxonomy_vocabulary_load($field_info['settings']['allowed_values'][0]['vocabulary']);
+    if ($vocabulary) {
+      // Export vocabulary
+      $export_data['taxonomy']['vocabularies'][$vocabulary->machine_name] = array(
+        'name' => $vocabulary->name,
+        'machine_name' => $vocabulary->machine_name,
+        'description' => $vocabulary->description,
+        'hierarchy' => $vocabulary->hierarchy,
+        'weight' => $vocabulary->weight,
+        'language' => isset($vocabulary->language) ? $vocabulary->language : LANGUAGE_NONE,
+      );
+
+      // Export terms
+      $terms = taxonomy_get_tree($vocabulary->machine_name);
+      if (!empty($terms)) {
+        $export_data['taxonomy']['terms'][$vocabulary->machine_name] = array();
+        foreach ($terms as $term) {
+          $export_data['taxonomy']['terms'][$vocabulary->machine_name][$term->tid] = array(
+            'name' => $term->name,
+            'description' => $term->description,
+            'format' => $term->format,
+            'weight' => $term->weight,
+            'parent' => isset($term->parents) ? reset($term->parents) : 0,
+            'language' => isset($term->language) ? $term->language : LANGUAGE_NONE,
+          );
+        }
       }
     }
   }
@@ -125,6 +170,15 @@ function bien_export_settings_submit(array $form, array &$form_state) {
     $nids[] = $r->nid;
   }
   $nodes = node_load_multiple($nids);
+  
+  // Add UUIDs to nodes if they don't have them
+  $uuid = new Uuid();
+  foreach ($nodes as $node) {
+    if (!isset($node->uuid)) {
+      $node->uuid = $uuid->generate();
+    }
+  }
+  
   $export_data['nodes'] = $nodes;
 
   // Create a temporary directory for the export
