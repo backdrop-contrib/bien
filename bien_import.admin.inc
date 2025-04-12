@@ -2,11 +2,19 @@
 
 /**
  * @file
- * Import form to import content from another Backdrop or Wordpress site.
+ * Import form to import content from another Backdrop or WordPress site.
  */
 
 /**
- * Callback function for /admin/config/import.
+ * Form callback: Provides the content import form.
+ *
+ * @param array $form
+ *   The form array.
+ * @param array $form_state
+ *   The form state array.
+ *
+ * @return array
+ *   The complete form array.
  */
 function bien_import_settings($form, &$form_state) {
   $form = array();
@@ -14,20 +22,15 @@ function bien_import_settings($form, &$form_state) {
     '#type' => 'fieldset',
     '#title' => t('Import Content'),
   );
-  // TODO: Figure out if we can autodetect the type of impoort.
-  // $form['import']['type-of-import'] = array(
-  //   '#type' => 'select',
-  //   '#title' => 'Source of import data:',
-  //   '#description' => 'Select the source of the import i.e. the data came from a Backdrop site.',
-  //   '#options' => array(
-  //     'backdrop' => 'Backdrop CMS',
-  //     'wordrpress' => 'WordPress',
-  //   ),
-  // );
+  // @todo Implement auto-detection of import source type.
   $form['import']['import-file'] = array(
     '#type' => 'file',
-    '#title' => 'Upload a ZIP file:',
-    '#description' => 'Upload a ZIP file containing content export from a Backdrop site.',
+    '#title' => t('Upload a ZIP file'),
+    '#description' => t('Upload a ZIP file containing content export from a Backdrop site.'),
+    '#upload_validators' => array(
+      'file_validate_extensions' => array('zip'),
+      'file_validate_size' => array(file_upload_max_size()),
+    ),
   );
   $form['import']['submit'] = array(
     '#type' => 'submit',
@@ -42,23 +45,28 @@ function bien_import_settings($form, &$form_state) {
 }
 
 /**
- * Validate handler for bien_import_settings().
+ * Validate handler for the content import form.
+ *
+ * @param array $form
+ *   The form array.
+ * @param array $form_state
+ *   The form state array.
  */
 function bien_import_settings_validate($form, &$form_state) {
-  $file = file_save_upload('import-file', array(
-    // Validate extensions.
+  $validators = array(
     'file_validate_extensions' => array('zip'),
-  ));
+    'file_validate_size' => array(file_upload_max_size()),
+  );
 
-  // If the file passed validation:
+  $file = file_save_upload('import-file', $validators);
+
   if ($file) {
-    // Move the file into the backdrop file system.
     if ($file = file_move($file, 'public://')) {
-      // Save the file for use in the submit handler.
       $form_state['storage']['import-file'] = $file;
     }
     else {
-      form_set_error('import-file',
+      form_set_error(
+        'import-file',
         t("Failed to write the uploaded file to the site's file folder.")
       );
     }
@@ -144,10 +152,26 @@ function bien_import_settings_submit(&$form, &$form_state) {
           backdrop_set_message(t('Warning: Skipping file with empty filename.'), 'warning');
           continue;
         }
+
+        // Check if we already have a mapping for this file ID
+        if (isset($form_state['storage']['file_map'][$fid])) {
+          continue;
+        }
+
+        // Check if file with this name already exists
+        $existing_files = file_load_multiple(array(), array('filename' => $filename));
+        if (!empty($existing_files)) {
+          // Use the first matching file
+          $existing_file = reset($existing_files);
+          $form_state['storage']['file_map'][$fid] = $existing_file->fid;
+          continue;
+        }
         
         // Create a new file entry
         $new_file = new File();
-        $new_file->uri = 'public://' . $filename;
+        // Generate a unique filename by adding a timestamp
+        $unique_filename = time() . '_' . $filename;
+        $new_file->uri = 'public://' . $unique_filename;
         $new_file->filename = $filename;
         $new_file->filemime = file_get_mimetype($filename);
         $new_file->uid = $GLOBALS['user']->uid;
@@ -179,6 +203,93 @@ function bien_import_settings_submit(&$form, &$form_state) {
 
   // Check if this is a new format export with content types
   if (isset($content['content_types']) && isset($content['nodes'])) {
+    // First import taxonomy vocabularies and terms
+    if (isset($content['taxonomy'])) {
+      // Create a mapping of old term IDs to new term IDs
+      $term_id_map = array();
+      
+      // Import vocabularies first
+      if (isset($content['taxonomy']['vocabularies'])) {
+        foreach ($content['taxonomy']['vocabularies'] as $machine_name => $vocab_data) {
+          // Check if vocabulary exists
+          $existing_vocab = taxonomy_vocabulary_machine_name_load($machine_name);
+          if (!$existing_vocab) {
+            // Create new vocabulary using the proper class
+            $vocabulary = new TaxonomyVocabulary();
+            $vocabulary->name = $vocab_data['name'];
+            $vocabulary->machine_name = $vocab_data['machine_name'];
+            $vocabulary->description = $vocab_data['description'];
+            $vocabulary->hierarchy = $vocab_data['hierarchy'];
+            $vocabulary->weight = $vocab_data['weight'];
+            if (isset($vocab_data['language'])) {
+              $vocabulary->language = $vocab_data['language'];
+            }
+            taxonomy_vocabulary_save($vocabulary);
+            backdrop_set_message(t('Created new vocabulary: @name', array('@name' => $vocabulary->name)));
+          }
+        }
+      }
+
+      // Import terms
+      if (isset($content['taxonomy']['terms'])) {
+        // Create a mapping of old term IDs to new term IDs
+        $term_id_map = array();
+        $term_count = 0;
+        
+        // First pass: Create all terms without parents
+        foreach ($content['taxonomy']['terms'] as $vocabulary_machine_name => $terms) {
+          foreach ($terms as $old_tid => $term_data) {
+            if (!isset($term_data['parent']) || $term_data['parent'] == 0) {
+              $vocabulary = taxonomy_vocabulary_machine_name_load($vocabulary_machine_name);
+              if ($vocabulary) {
+                $term = new TaxonomyTerm();
+                $term->name = $term_data['name'];
+                $term->description = $term_data['description'];
+                $term->format = $term_data['format'];
+                $term->weight = $term_data['weight'];
+                $term->vocabulary = $vocabulary->machine_name;
+                $term->parent = array(0);
+                if (isset($term_data['language'])) {
+                  $term->language = $term_data['language'];
+                }
+                taxonomy_term_save($term);
+                $term_id_map[$old_tid] = $term->tid;
+                $term_count++;
+              }
+            }
+          }
+        }
+
+        // Second pass: Create terms with parents
+        foreach ($content['taxonomy']['terms'] as $vocabulary_machine_name => $terms) {
+          foreach ($terms as $old_tid => $term_data) {
+            if (isset($term_data['parent']) && $term_data['parent'] != 0 && !isset($term_id_map[$old_tid])) {
+              $vocabulary = taxonomy_vocabulary_machine_name_load($vocabulary_machine_name);
+              if ($vocabulary) {
+                $term = new TaxonomyTerm();
+                $term->name = $term_data['name'];
+                $term->description = $term_data['description'];
+                $term->format = $term_data['format'];
+                $term->weight = $term_data['weight'];
+                $term->vocabulary = $vocabulary->machine_name;
+                $term->parent = array(isset($term_id_map[$term_data['parent']]) ? $term_id_map[$term_data['parent']] : 0);
+                if (isset($term_data['language'])) {
+                  $term->language = $term_data['language'];
+                }
+                taxonomy_term_save($term);
+                $term_id_map[$old_tid] = $term->tid;
+                $term_count++;
+              }
+            }
+          }
+        }
+        
+        if ($term_count > 0) {
+          backdrop_set_message(t('Created @count new taxonomy terms.', array('@count' => $term_count)));
+        }
+      }
+    }
+
     // Import content types first
     foreach ($content['content_types'] as $type => $type_data) {
       // Check if content type exists
@@ -221,6 +332,20 @@ function bien_import_settings_submit(&$form, &$form_state) {
           }
         }
 
+        // Add UUID field if it doesn't exist
+        if (!field_info_field('field_uuid')) {
+          $uuid_field = array(
+            'field_name' => 'field_uuid',
+            'type' => 'text',
+            'cardinality' => 1,
+            'locked' => TRUE,
+            'settings' => array(
+              'max_length' => 36,
+            ),
+          );
+          field_create_field($uuid_field);
+        }
+
         // Import field instances
         if (isset($type_data['field_instances'])) {
           foreach ($type_data['field_instances'] as $field_name => $instance) {
@@ -228,6 +353,31 @@ function bien_import_settings_submit(&$form, &$form_state) {
               field_create_instance($instance);
             }
           }
+        }
+
+        // Add UUID field instance if it doesn't exist
+        if (!field_info_instance('node', 'field_uuid', $type)) {
+          $uuid_instance = array(
+            'field_name' => 'field_uuid',
+            'entity_type' => 'node',
+            'bundle' => $type,
+            'label' => 'UUID',
+            'description' => 'Unique identifier for this content',
+            'required' => FALSE,
+            'widget' => array(
+              'type' => 'text_textfield',
+              'settings' => array(
+                'size' => 60,
+              ),
+            ),
+            'display' => array(
+              'default' => array(
+                'label' => 'above',
+                'type' => 'text_default',
+              ),
+            ),
+          );
+          field_create_instance($uuid_instance);
         }
 
         // Clear the menu cache to make the new content type available
@@ -239,13 +389,29 @@ function bien_import_settings_submit(&$form, &$form_state) {
     $content = $content['nodes'];
   }
 
-  // Save as new content nodes.
+  // First pass: Create a mapping of UUIDs to new NIDs
+  $uuid_to_nid = array();
+  foreach ($content as $c) {
+    if (isset($c['uuid'])) {
+      $uuid_to_nid[$c['uuid']] = NULL; // Will be populated after node creation
+    }
+  }
+
+  // Second pass: Import nodes and update the mapping
+  $node_count = 0;
+  $skipped_count = 0;
   foreach ($content as $c) {
     if(isset($c['nid'])) {
       unset($c['nid']);
     }
     if (isset($c['vid'])) {
       unset($c['vid']);
+    }
+
+    // Check if node with this UUID already exists
+    if (isset($c['uuid']) && bien_entity_exists_by_uuid('node', $c['uuid'])) {
+      $skipped_count++;
+      continue;
     }
 
     // Validate that the content type exists
@@ -327,6 +493,62 @@ function bien_import_settings_submit(&$form, &$form_state) {
               }
             }
           }
+          // Handle node reference fields
+          elseif ($field_info && $field_info['type'] === 'node_reference') {
+            if (is_array($value)) {
+              $valid_items = array();
+              foreach ($value as $lang => $items) {
+                if (is_array($items)) {
+                  $valid_items[$lang] = array();
+                  foreach ($items as $delta => $item) {
+                    if (isset($item['nid'])) {
+                      // Find the original node to get its UUID
+                      $original_node = NULL;
+                      foreach ($content as $original) {
+                        if (isset($original['nid']) && $original['nid'] == $item['nid']) {
+                          $original_node = $original;
+                          break;
+                        }
+                      }
+                      
+                      if ($original_node && isset($original_node['uuid']) && isset($uuid_to_nid[$original_node['uuid']])) {
+                        $valid_items[$lang][] = array('nid' => $uuid_to_nid[$original_node['uuid']]);
+                      }
+                    }
+                  }
+                }
+              }
+              if (!empty($valid_items)) {
+                $value = $valid_items;
+              } else {
+                continue;
+              }
+            }
+          }
+          // Handle taxonomy term reference fields
+          elseif ($field_info && $field_info['type'] === 'taxonomy_term_reference') {
+            if (is_array($value)) {
+              $valid_items = array();
+              foreach ($value as $lang => $items) {
+                if (is_array($items)) {
+                  $valid_items[$lang] = array();
+                  foreach ($items as $delta => $item) {
+                    if (isset($item['tid'])) {
+                      // Update term ID using our mapping
+                      if (isset($term_id_map[$item['tid']])) {
+                        $valid_items[$lang][] = array('tid' => $term_id_map[$item['tid']]);
+                      }
+                    }
+                  }
+                }
+              }
+              if (!empty($valid_items)) {
+                $value = $valid_items;
+              } else {
+                continue;
+              }
+            }
+          }
         }
         $node->$key = $value;
       }
@@ -348,6 +570,14 @@ function bien_import_settings_submit(&$form, &$form_state) {
     
     try {
       $node->save();
+      $node_count++;
+      // Update the UUID to NID mapping
+      if (isset($c['uuid'])) {
+        $uuid_to_nid[$c['uuid']] = $node->nid;
+        // Store the UUID in the field
+        $node->field_uuid[LANGUAGE_NONE][0]['value'] = $c['uuid'];
+        $node->save();
+      }
     }
     catch (Exception $e) {
       backdrop_set_message(t('Error saving node: @error', array('@error' => $e->getMessage())), 'error');
@@ -360,12 +590,32 @@ function bien_import_settings_submit(&$form, &$form_state) {
   // Give a message to the user.
   backdrop_set_message(
     t(
-      'Import completed successfully. @node_count nodes were imported with @file_count associated files. Visit the <a href="@content_url">content listing</a> to view the imported content.',
+      'Import completed successfully. @node_count new nodes were imported (@skipped_count skipped as duplicates) with @file_count associated files. Visit the <a href="@content_url">content listing</a> to view the imported content.',
       array(
-        '@node_count' => count($content),
+        '@node_count' => $node_count,
+        '@skipped_count' => $skipped_count,
         '@file_count' => count($form_state['storage']['file_map']),
         '@content_url' => url('admin/content')
       )
     )
   );
+}
+
+/**
+ * Check if an entity with the given UUID already exists.
+ *
+ * @param string $entity_type
+ *   The type of entity to check (e.g., 'node', 'file').
+ * @param string $uuid
+ *   The UUID to check for.
+ *
+ * @return bool
+ *   TRUE if an entity with the UUID exists, FALSE otherwise.
+ */
+function bien_entity_exists_by_uuid($entity_type, $uuid) {
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', $entity_type)
+        ->fieldCondition('field_uuid', 'value', $uuid);
+  $result = $query->execute();
+  return !empty($result[$entity_type]);
 }
